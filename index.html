@@ -2,17 +2,25 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Auto Chain Switch Sign Test</title>
+  <title>Delayed Chain Switch Sign Test</title>
 </head>
 <body>
-  <h1>Auto Chain Switch Sign Test</h1>
-  <p>
-    This page automatically switches the wallet to Base, then asks to sign a transaction
-    whose tx.chainId is Ethereum Mainnet.
-  </p>
+  <h1>Delayed Chain Switch Sign Test</h1>
+  <p>This tests whether signing immediately after wallet_switchEthereumChain causes chain-state inconsistency.</p>
 
-  <button id="connect">1. Connect</button>
-  <button id="attack">2. Auto-switch to Base + sign tx.chainId 0x1</button>
+  <button id="connect">Connect</button>
+
+  <hr>
+
+  <button id="delay0">Switch Base + sign tx.chainId 0x1 after 0ms</button>
+  <button id="delay500">Switch Base + sign tx.chainId 0x1 after 500ms</button>
+  <button id="delay2000">Switch Base + sign tx.chainId 0x1 after 2000ms</button>
+  <button id="delay5000">Switch Base + sign tx.chainId 0x1 after 5000ms</button>
+
+  <hr>
+
+  <button id="noChain0">Switch Base + sign tx WITHOUT chainId after 0ms</button>
+  <button id="noChain2000">Switch Base + sign tx WITHOUT chainId after 2000ms</button>
 
   <pre id="log"></pre>
 
@@ -25,9 +33,13 @@
       console.log(line);
     }
 
+    function sleep(ms) {
+      return new Promise(r => setTimeout(r, ms));
+    }
+
     async function eth() {
       while (!window.ethereum) {
-        await new Promise(r => setTimeout(r, 25));
+        await sleep(25);
       }
       return window.ethereum;
     }
@@ -45,39 +57,47 @@
       log("Current chain:", await getChain());
     }
 
-    async function autoSwitchAndSign() {
+    async function switchToBase() {
+      const provider = await eth();
+
+      log("Before switch:", await getChain());
+
+      const result = await provider.request({
+        method: "wallet_switchEthereumChain",
+        params: [{ chainId: "0x2105" }]
+      });
+
+      log("wallet_switchEthereumChain result:", JSON.stringify(result));
+      log("After switch eth_chainId:", await getChain());
+    }
+
+    async function signAfterDelay(delayMs, includeChainId) {
       const provider = await eth();
 
       if (!selectedAccount) {
-        log("No account connected. Click Connect first.");
-        return;
+        await connect();
       }
 
-      log("Before auto switch:", await getChain());
+      await switchToBase();
 
-      try {
-        const switchResult = await provider.request({
-          method: "wallet_switchEthereumChain",
-          params: [{ chainId: "0x2105" }]
-        });
-        log("wallet_switchEthereumChain result:", JSON.stringify(switchResult));
-      } catch (e) {
-        log("wallet_switchEthereumChain error:", e.message || String(e));
-        return;
-      }
+      log("Waiting before sign:", delayMs, "ms");
+      await sleep(delayMs);
 
-      const currentChain = await getChain();
-      log("After auto switch:", currentChain);
+      const chainBeforeSign = await getChain();
+      log("eth_chainId immediately before sign:", chainBeforeSign);
 
       const tx = {
         from: selectedAccount,
         to: selectedAccount,
         value: "0x0",
-        chainId: "0x1",
         gas: "0x5208"
       };
 
-      log("Requesting eth_signTransaction with tx.chainId 0x1 while active chain is", currentChain);
+      if (includeChainId) {
+        tx.chainId = "0x1";
+      }
+
+      log("Calling eth_signTransaction. includeChainId:", includeChainId, "tx.chainId:", tx.chainId || "none");
 
       try {
         const signed = await provider.request({
@@ -85,7 +105,7 @@
           params: [tx]
         });
 
-        log("SIGNED_RAW_TX_START");
+        log("SIGNED_RAW_TX_START delay=" + delayMs + " includeChainId=" + includeChainId);
         log(signed);
         log("SIGNED_RAW_TX_END");
       } catch (e) {
@@ -94,7 +114,14 @@
     }
 
     document.getElementById("connect").onclick = connect;
-    document.getElementById("attack").onclick = autoSwitchAndSign;
+
+    document.getElementById("delay0").onclick = () => signAfterDelay(0, true);
+    document.getElementById("delay500").onclick = () => signAfterDelay(500, true);
+    document.getElementById("delay2000").onclick = () => signAfterDelay(2000, true);
+    document.getElementById("delay5000").onclick = () => signAfterDelay(5000, true);
+
+    document.getElementById("noChain0").onclick = () => signAfterDelay(0, false);
+    document.getElementById("noChain2000").onclick = () => signAfterDelay(2000, false);
   </script>
 </body>
 </html>
