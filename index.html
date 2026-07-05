@@ -2,30 +2,29 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Delayed Chain Switch Sign Test</title>
+  <title>Kraken Solana Batch Signing UI Test</title>
+  <script src="https://unpkg.com/@solana/web3.js@1.95.4/lib/index.iife.min.js"></script>
+  <style>
+    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif; padding: 16px; line-height: 1.45; }
+    button { display: block; margin: 10px 0; padding: 12px; font-size: 16px; }
+    pre { background: #f4f4f4; border: 1px solid #ddd; padding: 12px; white-space: pre-wrap; word-break: break-word; }
+  </style>
 </head>
 <body>
-  <h1>Delayed Chain Switch Sign Test</h1>
-  <p>This tests whether signing immediately after wallet_switchEthereumChain causes chain-state inconsistency.</p>
+  <h1>Kraken Solana Batch Signing UI Test</h1>
 
-  <button id="connect">Connect</button>
+  <p>
+    This page requests two Solana transactions in one signTransactions call.
+    It does not broadcast them.
+  </p>
 
-  <hr>
-
-  <button id="delay0">Switch Base + sign tx.chainId 0x1 after 0ms</button>
-  <button id="delay500">Switch Base + sign tx.chainId 0x1 after 500ms</button>
-  <button id="delay2000">Switch Base + sign tx.chainId 0x1 after 2000ms</button>
-  <button id="delay5000">Switch Base + sign tx.chainId 0x1 after 5000ms</button>
-
-  <hr>
-
-  <button id="noChain0">Switch Base + sign tx WITHOUT chainId after 0ms</button>
-  <button id="noChain2000">Switch Base + sign tx WITHOUT chainId after 2000ms</button>
+  <button id="connect">1. Connect Solana Wallet</button>
+  <button id="signTwo">2. Sign TWO transactions only</button>
 
   <pre id="log"></pre>
 
   <script>
-    let selectedAccount = null;
+    let publicKey = null;
 
     function log(...x) {
       const line = x.join(" ");
@@ -34,94 +33,127 @@
     }
 
     function sleep(ms) {
-      return new Promise(r => setTimeout(r, ms));
+      return new Promise(resolve => setTimeout(resolve, ms));
     }
 
-    async function eth() {
-      while (!window.ethereum) {
+    async function getProvider() {
+      while (!window.solana) {
         await sleep(25);
       }
-      return window.ethereum;
-    }
-
-    async function getChain() {
-      const provider = await eth();
-      return provider.request({ method: "eth_chainId" });
+      return window.solana;
     }
 
     async function connect() {
-      const provider = await eth();
-      const accounts = await provider.request({ method: "eth_requestAccounts" });
-      selectedAccount = accounts[0];
-      log("Connected:", selectedAccount);
-      log("Current chain:", await getChain());
+      const provider = await getProvider();
+
+      log("window.solana detected");
+      log("isKrakenWallet:", String(provider.isKrakenWallet));
+      log("isPhantom:", String(provider.isPhantom));
+
+      const result = await provider.connect();
+      publicKey = result.publicKey;
+
+      log("Connected Solana publicKey:", publicKey.toString());
     }
 
-    async function switchToBase() {
-      const provider = await eth();
+    async function signTwoTransactions() {
+      if (!window.solanaWeb3) {
+        log("ERROR: solanaWeb3 library did not load from CDN.");
+        return;
+      }
 
-      log("Before switch:", await getChain());
+      const provider = await getProvider();
 
-      const result = await provider.request({
-        method: "wallet_switchEthereumChain",
-        params: [{ chainId: "0x2105" }]
-      });
-
-      log("wallet_switchEthereumChain result:", JSON.stringify(result));
-      log("After switch eth_chainId:", await getChain());
-    }
-
-    async function signAfterDelay(delayMs, includeChainId) {
-      const provider = await eth();
-
-      if (!selectedAccount) {
+      if (!publicKey) {
         await connect();
       }
 
-      await switchToBase();
+      const {
+        Connection,
+        PublicKey,
+        SystemProgram,
+        Transaction,
+        TransactionInstruction,
+        Keypair
+      } = window.solanaWeb3;
 
-      log("Waiting before sign:", delayMs, "ms");
-      await sleep(delayMs);
+      const connection = new Connection("https://api.mainnet-beta.solana.com", "confirmed");
 
-      const chainBeforeSign = await getChain();
-      log("eth_chainId immediately before sign:", chainBeforeSign);
+      log("Fetching latest blockhash...");
+      const latest = await connection.getLatestBlockhash("confirmed");
+      log("recentBlockhash:", latest.blockhash);
 
-      const tx = {
-        from: selectedAccount,
-        to: selectedAccount,
-        value: "0x0",
-        gas: "0x5208"
-      };
+      const user = new PublicKey(publicKey.toString());
+      const randomRecipient = Keypair.generate().publicKey;
+      const memoProgram = new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
 
-      if (includeChainId) {
-        tx.chainId = "0x1";
-      }
+      log("TX1: 0 lamport self-transfer");
+      log("TX2: 0 lamport transfer to random recipient + memo");
+      log("TX2 random recipient:", randomRecipient.toString());
 
-      log("Calling eth_signTransaction. includeChainId:", includeChainId, "tx.chainId:", tx.chainId || "none");
+      const tx1 = new Transaction({
+        feePayer: user,
+        recentBlockhash: latest.blockhash
+      });
+
+      tx1.add(
+        SystemProgram.transfer({
+          fromPubkey: user,
+          toPubkey: user,
+          lamports: 0
+        })
+      );
+
+      const tx2 = new Transaction({
+        feePayer: user,
+        recentBlockhash: latest.blockhash
+      });
+
+      tx2.add(
+        SystemProgram.transfer({
+          fromPubkey: user,
+          toPubkey: randomRecipient,
+          lamports: 0
+        })
+      );
+
+      tx2.add(
+        new TransactionInstruction({
+          keys: [],
+          programId: memoProgram,
+          data: new TextEncoder().encode("TX2_DIFFERENT_RECIPIENT_SHOULD_BE_VISIBLE")
+        })
+      );
+
+      log("Calling provider.signTransactions([tx1, tx2])");
+      log("IMPORTANT: inspect the Kraken Wallet UI before approving.");
 
       try {
-        const signed = await provider.request({
-          method: "eth_signTransaction",
-          params: [tx]
+        const signed = await provider.signTransactions([tx1, tx2]);
+
+        log("SIGNED_RESULT_COUNT:", signed.length);
+
+        signed.forEach((tx, i) => {
+          const raw = tx.serialize({
+            requireAllSignatures: false,
+            verifySignatures: false
+          });
+
+          log("SIGNED_TX_" + (i + 1) + "_RAW_LENGTH:", raw.length);
+          log("SIGNED_TX_" + (i + 1) + "_SIGNATURES:", JSON.stringify(tx.signatures.map(s => ({
+            publicKey: s.publicKey.toString(),
+            hasSignature: s.signature !== null
+          }))));
         });
 
-        log("SIGNED_RAW_TX_START delay=" + delayMs + " includeChainId=" + includeChainId);
-        log(signed);
-        log("SIGNED_RAW_TX_END");
+        log("DONE. This page did NOT broadcast the signed transactions.");
       } catch (e) {
-        log("eth_signTransaction error:", e.message || String(e));
+        log("signTransactions error:", e.message || String(e));
       }
     }
 
     document.getElementById("connect").onclick = connect;
-
-    document.getElementById("delay0").onclick = () => signAfterDelay(0, true);
-    document.getElementById("delay500").onclick = () => signAfterDelay(500, true);
-    document.getElementById("delay2000").onclick = () => signAfterDelay(2000, true);
-    document.getElementById("delay5000").onclick = () => signAfterDelay(5000, true);
-
-    document.getElementById("noChain0").onclick = () => signAfterDelay(0, false);
-    document.getElementById("noChain2000").onclick = () => signAfterDelay(2000, false);
+    document.getElementById("signTwo").onclick = signTwoTransactions;
   </script>
 </body>
 </html>
