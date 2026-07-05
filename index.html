@@ -14,7 +14,7 @@
   <h1>Kraken Solana Batch Signing UI Test</h1>
 
   <p>
-    This page requests two Solana transactions in one signTransactions call.
+    This page requests two Solana transactions in one signAllTransactions call.
     It does not broadcast them.
   </p>
 
@@ -53,6 +53,10 @@
       log("window.solana detected");
       log("isKrakenWallet:", String(provider.isKrakenWallet));
       log("isPhantom:", String(provider.isPhantom));
+      log("typeof signTransaction:", typeof provider.signTransaction);
+      log("typeof signAllTransactions:", typeof provider.signAllTransactions);
+      log("typeof signAndSendTransaction:", typeof provider.signAndSendTransaction);
+      log("typeof signAndSendAllTransactions:", typeof provider.signAndSendAllTransactions);
 
       const result = await provider.connect();
       publicKey = result.publicKey;
@@ -67,6 +71,13 @@
       }
 
       const provider = await getProvider();
+
+      log("typeof provider.signAllTransactions:", typeof provider.signAllTransactions);
+
+      if (typeof provider.signAllTransactions !== "function") {
+        log("ERROR: provider.signAllTransactions is not available.");
+        return;
+      }
 
       if (!publicKey) {
         await connect();
@@ -130,11 +141,11 @@
         })
       );
 
-      log("Calling provider.signTransactions([tx1, tx2])");
+      log("Calling provider.signAllTransactions([tx1, tx2])");
       log("IMPORTANT: inspect the Kraken Wallet UI before approving.");
 
       try {
-        const signed = await provider.signTransactions([tx1, tx2]);
+        const signed = await provider.signAllTransactions([tx1, tx2]);
 
         log("SIGNED_RESULT_COUNT:", signed.length);
 
@@ -153,7 +164,7 @@
 
         log("DONE. This page did NOT broadcast the signed transactions.");
       } catch (e) {
-        log("signTransactions error:", e.message || String(e));
+        log("signAllTransactions error:", e.message || String(e));
       }
     }
 
