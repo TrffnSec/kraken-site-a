@@ -1,0 +1,55 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Trusted Site A</title>
+</head>
+<body>
+  <h1>Trusted Site A</h1>
+  <p>Step 1: connect this page to Kraken Wallet.</p>
+  <p>Step 2: after connection, click Navigate to Site B.</p>
+
+  <button id="connect">Connect Wallet</button>
+  <button id="go">Navigate to Site B</button>
+
+  <pre id="log"></pre>
+
+  <script>
+    const SITE_B_URL = "PASTE_SITE_B_URL_HERE";
+
+    function log(...x) {
+      const line = x.join(" ");
+      document.getElementById("log").textContent += line + "\n";
+      console.log(line);
+    }
+
+    async function waitEthereum() {
+      while (!window.ethereum) {
+        await new Promise(r => setTimeout(r, 50));
+      }
+      return window.ethereum;
+    }
+
+    document.getElementById("connect").onclick = async () => {
+      const eth = await waitEthereum();
+      log("[A] window.ethereum detected");
+
+      try {
+        const accounts = await eth.request({ method: "eth_requestAccounts" });
+        log("[A] eth_requestAccounts result:", JSON.stringify(accounts));
+      } catch (e) {
+        log("[A] eth_requestAccounts error:", e.message || String(e));
+      }
+    };
+
+    document.getElementById("go").onclick = () => {
+      if (!SITE_B_URL || SITE_B_URL.includes("PASTE_SITE_B_URL_HERE")) {
+        log("ERROR: You must paste Site B URL into SITE_B_URL first.");
+        return;
+      }
+
+      location.href = SITE_B_URL + "?ts=" + Date.now();
+    };
+  </script>
+</body>
+</html>
