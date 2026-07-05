@@ -6,7 +6,7 @@
   <script src="https://unpkg.com/@solana/web3.js@1.95.4/lib/index.iife.min.js"></script>
   <style>
     body { font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif; padding: 16px; line-height: 1.45; }
-    button { display: block; margin: 10px 0; padding: 12px; font-size: 16px; }
+    button, input { display: block; margin: 10px 0; padding: 12px; font-size: 16px; width: 100%; box-sizing: border-box; }
     pre { background: #f4f4f4; border: 1px solid #ddd; padding: 12px; white-space: pre-wrap; word-break: break-word; }
   </style>
 </head>
@@ -19,6 +19,10 @@
   </p>
 
   <button id="connect">1. Connect Solana Wallet</button>
+
+  <label for="blockhash"><b>Latest Solana blockhash from Kali:</b></label>
+  <input id="blockhash" placeholder="Paste latest Solana blockhash here">
+
   <button id="signTwo">2. Sign TWO transactions only</button>
 
   <pre id="log"></pre>
@@ -68,8 +72,14 @@
         await connect();
       }
 
+      const blockhash = document.getElementById("blockhash").value.trim();
+
+      if (!blockhash) {
+        log("ERROR: Paste a fresh latest Solana blockhash first.");
+        return;
+      }
+
       const {
-        Connection,
         PublicKey,
         SystemProgram,
         Transaction,
@@ -77,23 +87,18 @@
         Keypair
       } = window.solanaWeb3;
 
-      const connection = new Connection("https://api.mainnet-beta.solana.com", "confirmed");
-
-      log("Fetching latest blockhash...");
-      const latest = await connection.getLatestBlockhash("confirmed");
-      log("recentBlockhash:", latest.blockhash);
-
       const user = new PublicKey(publicKey.toString());
       const randomRecipient = Keypair.generate().publicKey;
       const memoProgram = new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
 
+      log("Using manual recentBlockhash:", blockhash);
       log("TX1: 0 lamport self-transfer");
       log("TX2: 0 lamport transfer to random recipient + memo");
       log("TX2 random recipient:", randomRecipient.toString());
 
       const tx1 = new Transaction({
         feePayer: user,
-        recentBlockhash: latest.blockhash
+        recentBlockhash: blockhash
       });
 
       tx1.add(
@@ -106,7 +111,7 @@
 
       const tx2 = new Transaction({
         feePayer: user,
-        recentBlockhash: latest.blockhash
+        recentBlockhash: blockhash
       });
 
       tx2.add(
