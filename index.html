@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>TX FROM MISMATCH ONLY</title>
+  <title>Kraken eth_signTransaction Controls</title>
   <script src="https://cdn.jsdelivr.net/npm/ethers@6.13.2/dist/ethers.umd.min.js"></script>
   <style>
     body { font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif; padding: 16px; line-height: 1.45; }
@@ -11,10 +11,12 @@
   </style>
 </head>
 <body>
-  <h1>TX FROM MISMATCH ONLY</h1>
+  <h1>Kraken eth_signTransaction Controls</h1>
 
   <button id="connect">1. Connect</button>
-  <button id="signTxMismatch">2. eth_signTransaction with WRONG tx.from</button>
+  <button id="noFrom">2. eth_signTransaction with NO from</button>
+  <button id="matchingFrom">3. eth_signTransaction with MATCHING from</button>
+  <button id="wrongFrom">4. eth_signTransaction with WRONG from</button>
 
   <pre id="log"></pre>
 
@@ -47,15 +49,13 @@
       const accounts = await provider.request({ method: "eth_requestAccounts" });
       account = accounts[0];
 
-      log("PAGE:", "TX FROM MISMATCH ONLY");
       log("Connected account:", account);
-      log("Wrong tx.from used in test:", WRONG_FROM);
       log("Current chain:", await provider.request({ method: "eth_chainId" }));
+      log("Wrong from:", WRONG_FROM);
     }
 
     function decodeRawTx(raw) {
       const tx = ethers.Transaction.from(raw);
-
       return {
         type: tx.type,
         chainId: tx.chainId ? tx.chainId.toString() : null,
@@ -65,18 +65,13 @@
         gasLimit: tx.gasLimit ? tx.gasLimit.toString() : null,
         value: tx.value ? tx.value.toString() : null,
         data: tx.data,
-        gasPrice: tx.gasPrice ? tx.gasPrice.toString() : null,
         maxFeePerGas: tx.maxFeePerGas ? tx.maxFeePerGas.toString() : null,
         maxPriorityFeePerGas: tx.maxPriorityFeePerGas ? tx.maxPriorityFeePerGas.toString() : null,
-        signature: tx.signature ? {
-          r: tx.signature.r,
-          s: tx.signature.s,
-          yParity: tx.signature.yParity
-        } : null
+        gasPrice: tx.gasPrice ? tx.gasPrice.toString() : null
       };
     }
 
-    async function testTxFromMismatch() {
+    async function signTx(mode) {
       const provider = await waitEthereum();
 
       if (!account) {
@@ -84,10 +79,8 @@
       }
 
       const chainIdHex = await provider.request({ method: "eth_chainId" });
-      const chainId = parseInt(chainIdHex, 16);
 
       const tx = {
-        from: WRONG_FROM,
         to: account,
         value: "0x0",
         data: "0x",
@@ -97,14 +90,18 @@
         maxFeePerGas: "0x71e0a6"
       };
 
-      log("=== ETH_SIGNTRANSACTION TX.FROM MISMATCH TEST ===");
+      if (mode === "matching") {
+        tx.from = account;
+      }
+
+      if (mode === "wrong") {
+        tx.from = WRONG_FROM;
+      }
+
+      log("=== eth_signTransaction control ===");
+      log("Mode:", mode);
       log("Connected account:", account);
-      log("DApp-supplied tx.from:", WRONG_FROM);
-      log("DApp-supplied tx.to:", account);
-      log("DApp-supplied chainId:", chainIdHex, "/", chainId);
-      log("Transaction object sent to wallet:", tx);
-      log("EXPECTED_SECURE_BEHAVIOR: reject because tx.from != connected account.");
-      log("If approval opens, screenshot UI before confirming.");
+      log("Transaction object:", tx);
 
       try {
         const raw = await provider.request({
@@ -116,22 +113,15 @@
         log(raw);
 
         const decoded = decodeRawTx(raw);
-
         log("DECODED_SIGNED_TX:");
         log(decoded);
 
-        log("REQUESTED_TX_FROM:", WRONG_FROM);
-        log("CONNECTED_ACCOUNT:", account);
-        log("RECOVERED_SIGNED_TX_FROM:", decoded.from);
+        if (decoded.from && decoded.from.toLowerCase() === account.toLowerCase()) {
+          log("SIGNED_BY_CONNECTED_ACCOUNT");
+        }
 
-        if (
-          decoded.from &&
-          decoded.from.toLowerCase() === account.toLowerCase() &&
-          WRONG_FROM.toLowerCase() !== account.toLowerCase()
-        ) {
-          log("CANDIDATE: Kraken ignored mismatched tx.from and signed transaction with connected account.");
-        } else {
-          log("NO_CANDIDATE_OR_NEEDS_REVIEW");
+        if (mode === "wrong" && decoded.from && decoded.from.toLowerCase() === account.toLowerCase()) {
+          log("CANDIDATE_TX_FROM_MISMATCH_CONFIRMED");
         }
       } catch (e) {
         log("eth_signTransaction error:", e.message || String(e));
@@ -141,7 +131,9 @@
     }
 
     document.getElementById("connect").onclick = connect;
-    document.getElementById("signTxMismatch").onclick = testTxFromMismatch;
+    document.getElementById("noFrom").onclick = () => signTx("none");
+    document.getElementById("matchingFrom").onclick = () => signTx("matching");
+    document.getElementById("wrongFrom").onclick = () => signTx("wrong");
   </script>
 </body>
 </html>
