@@ -2,22 +2,32 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Trusted Site A</title>
+  <title>Kraken Signer Address Mismatch Test</title>
+  <script src="https://cdn.jsdelivr.net/npm/ethers@6.13.2/dist/ethers.umd.min.js"></script>
+  <style>
+    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif; padding: 16px; line-height: 1.45; }
+    button { display: block; margin: 10px 0; padding: 12px; font-size: 16px; width: 100%; }
+    pre { background: #f4f4f4; border: 1px solid #ddd; padding: 12px; white-space: pre-wrap; word-break: break-word; }
+  </style>
 </head>
 <body>
-  <h1>Trusted Site A</h1>
-  <p>This is the trusted connected origin.</p>
+  <h1>Kraken Signer Address Mismatch Test</h1>
 
-  <button id="connect">Connect Wallet</button>
-  <button id="accounts">Check Accounts</button>
+  <button id="connect">1. Connect</button>
+  <button id="personal">2. personal_sign with mismatched signer address</button>
+  <button id="typed">3. eth_signTypedData_v4 with mismatched signer address</button>
 
   <pre id="log"></pre>
 
   <script>
+    let account = null;
+
+    const WRONG_SIGNER = "0x1111111111111111111111111111111111111111";
+
     function log(...x) {
       const line = x.map(v => {
         try {
-          if (typeof v === "object") return JSON.stringify(v);
+          if (typeof v === "object") return JSON.stringify(v, null, 2);
           return String(v);
         } catch (_) {
           return String(v);
@@ -34,23 +44,134 @@
       return window.ethereum;
     }
 
+    function toHex(str) {
+      return "0x" + Array.from(new TextEncoder().encode(str))
+        .map(b => b.toString(16).padStart(2, "0"))
+        .join("");
+    }
+
     async function connect() {
       const provider = await waitEthereum();
       const accounts = await provider.request({ method: "eth_requestAccounts" });
-      log("[A] eth_requestAccounts:", accounts);
-      log("[A] eth_chainId:", await provider.request({ method: "eth_chainId" }));
+      account = accounts[0];
+
+      log("Connected account:", account);
+      log("Wrong signer parameter used in tests:", WRONG_SIGNER);
+      log("Current chain:", await provider.request({ method: "eth_chainId" }));
     }
 
-    async function accounts() {
+    async function testPersonalSignMismatch() {
       const provider = await waitEthereum();
-      const result = await provider.request({ method: "eth_accounts" });
-      log("[A] eth_accounts:", result);
+
+      if (!account) {
+        await connect();
+      }
+
+      const message = "Kraken personal_sign signer mismatch test";
+      const hexMessage = toHex(message);
+
+      log("=== personal_sign mismatch test ===");
+      log("Connected account:", account);
+      log("DApp-supplied signer param:", WRONG_SIGNER);
+      log("Message:", message);
+
+      try {
+        const sig = await provider.request({
+          method: "personal_sign",
+          params: [hexMessage, WRONG_SIGNER]
+        });
+
+        const recovered = ethers.verifyMessage(message, sig);
+
+        log("SIGNATURE_RETURNED:", sig);
+        log("RECOVERED_SIGNER:", recovered);
+        log("EXPECTED_IF_SECURE: request should reject because signer param != connected account");
+
+        if (recovered.toLowerCase() === account.toLowerCase() && WRONG_SIGNER.toLowerCase() !== account.toLowerCase()) {
+          log("CANDIDATE: Kraken ignored mismatched signer param and signed with connected account.");
+        } else {
+          log("NO_CANDIDATE: recovered signer did not match connected account.");
+        }
+      } catch (e) {
+        log("personal_sign error:", e.message || String(e));
+      }
+    }
+
+    async function testTypedDataMismatch() {
+      const provider = await waitEthereum();
+
+      if (!account) {
+        await connect();
+      }
+
+      const chainIdHex = await provider.request({ method: "eth_chainId" });
+      const chainId = parseInt(chainIdHex, 16);
+
+      const typedData = {
+        types: {
+          EIP712Domain: [
+            { name: "name", type: "string" },
+            { name: "version", type: "string" },
+            { name: "chainId", type: "uint256" },
+            { name: "verifyingContract", type: "address" }
+          ],
+          Mail: [
+            { name: "contents", type: "string" }
+          ]
+        },
+        primaryType: "Mail",
+        domain: {
+          name: "Kraken Signer Mismatch Test",
+          version: "1",
+          chainId: chainId,
+          verifyingContract: "0x0000000000000000000000000000000000000000"
+        },
+        message: {
+          contents: "Kraken eth_signTypedData_v4 signer mismatch test"
+        }
+      };
+
+      log("=== eth_signTypedData_v4 mismatch test ===");
+      log("Connected account:", account);
+      log("DApp-supplied signer param:", WRONG_SIGNER);
+      log("Typed data:", typedData);
+
+      try {
+        const sig = await provider.request({
+          method: "eth_signTypedData_v4",
+          params: [WRONG_SIGNER, JSON.stringify(typedData)]
+        });
+
+        const domain = {
+          name: typedData.domain.name,
+          version: typedData.domain.version,
+          chainId: typedData.domain.chainId,
+          verifyingContract: typedData.domain.verifyingContract
+        };
+
+        const types = {
+          Mail: typedData.types.Mail
+        };
+
+        const recovered = ethers.verifyTypedData(domain, types, typedData.message, sig);
+
+        log("SIGNATURE_RETURNED:", sig);
+        log("RECOVERED_SIGNER:", recovered);
+        log("EXPECTED_IF_SECURE: request should reject because signer param != connected account");
+
+        if (recovered.toLowerCase() === account.toLowerCase() && WRONG_SIGNER.toLowerCase() !== account.toLowerCase()) {
+          log("CANDIDATE: Kraken ignored mismatched typed-data signer param and signed with connected account.");
+        } else {
+          log("NO_CANDIDATE: recovered signer did not match connected account.");
+        }
+      } catch (e) {
+        log("eth_signTypedData_v4 error:", e.message || String(e));
+      }
     }
 
     document.getElementById("connect").onclick = connect;
-    document.getElementById("accounts").onclick = accounts;
-
-    log("[A] loaded:", location.href);
+    document.getElementById("personal").onclick = testPersonalSignMismatch;
+    document.getElementById("typed").onclick = testTypedDataMismatch;
   </script>
 </body>
 </html>
