@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Kraken eth_signTransaction Controls</title>
+  <title>Kraken EIP712 ChainId Mismatch Test</title>
   <script src="https://cdn.jsdelivr.net/npm/ethers@6.13.2/dist/ethers.umd.min.js"></script>
   <style>
     body { font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif; padding: 16px; line-height: 1.45; }
@@ -11,18 +11,19 @@
   </style>
 </head>
 <body>
-  <h1>Kraken eth_signTransaction Controls</h1>
+  <h1>Kraken EIP712 ChainId Mismatch Test</h1>
 
   <button id="connect">1. Connect</button>
-  <button id="noFrom">2. eth_signTransaction with NO from</button>
-  <button id="matchingFrom">3. eth_signTransaction with MATCHING from</button>
-  <button id="wrongFrom">4. eth_signTransaction with WRONG from</button>
+  <button id="switchBase">2. Switch active chain to Base 0x2105</button>
+  <button id="signMainnetTypedData">3. Sign typed data with domain.chainId = 1</button>
 
   <pre id="log"></pre>
 
   <script>
     let account = null;
-    const WRONG_FROM = "0x1111111111111111111111111111111111111111";
+
+    const BASE_CHAIN_ID_HEX = "0x2105";
+    const DOMAIN_CHAIN_ID = 1;
 
     function log(...x) {
       const line = x.map(v => {
@@ -50,90 +51,130 @@
       account = accounts[0];
 
       log("Connected account:", account);
-      log("Current chain:", await provider.request({ method: "eth_chainId" }));
-      log("Wrong from:", WRONG_FROM);
+      log("Initial active chain:", await provider.request({ method: "eth_chainId" }));
     }
 
-    function decodeRawTx(raw) {
-      const tx = ethers.Transaction.from(raw);
-      return {
-        type: tx.type,
-        chainId: tx.chainId ? tx.chainId.toString() : null,
-        from: tx.from || null,
-        to: tx.to || null,
-        nonce: tx.nonce,
-        gasLimit: tx.gasLimit ? tx.gasLimit.toString() : null,
-        value: tx.value ? tx.value.toString() : null,
-        data: tx.data,
-        maxFeePerGas: tx.maxFeePerGas ? tx.maxFeePerGas.toString() : null,
-        maxPriorityFeePerGas: tx.maxPriorityFeePerGas ? tx.maxPriorityFeePerGas.toString() : null,
-        gasPrice: tx.gasPrice ? tx.gasPrice.toString() : null
-      };
+    async function switchBase() {
+      const provider = await waitEthereum();
+
+      log("Switching active chain to Base:", BASE_CHAIN_ID_HEX);
+
+      try {
+        await provider.request({
+          method: "wallet_switchEthereumChain",
+          params: [{ chainId: BASE_CHAIN_ID_HEX }]
+        });
+
+        const active = await provider.request({ method: "eth_chainId" });
+        log("Active chain after switch:", active);
+
+        if (active.toLowerCase() === BASE_CHAIN_ID_HEX.toLowerCase()) {
+          log("BASE_SWITCH_OK");
+        } else {
+          log("BASE_SWITCH_NOT_CONFIRMED");
+        }
+      } catch (e) {
+        log("switchBase error:", e.message || String(e));
+        if (e.code !== undefined) log("error.code:", e.code);
+      }
     }
 
-    async function signTx(mode) {
+    async function signMainnetTypedDataWhileOnBase() {
       const provider = await waitEthereum();
 
       if (!account) {
         await connect();
       }
 
-      const chainIdHex = await provider.request({ method: "eth_chainId" });
+      const activeChainBefore = await provider.request({ method: "eth_chainId" });
 
-      const tx = {
-        to: account,
-        value: "0x0",
-        data: "0x",
-        chainId: chainIdHex,
-        gas: "0x5208",
-        maxPriorityFeePerGas: "0xb7002",
-        maxFeePerGas: "0x71e0a6"
+      const typedData = {
+        types: {
+          EIP712Domain: [
+            { name: "name", type: "string" },
+            { name: "version", type: "string" },
+            { name: "chainId", type: "uint256" },
+            { name: "verifyingContract", type: "address" }
+          ],
+          Permit: [
+            { name: "owner", type: "address" },
+            { name: "spender", type: "address" },
+            { name: "value", type: "uint256" },
+            { name: "nonce", type: "uint256" },
+            { name: "deadline", type: "uint256" }
+          ]
+        },
+        primaryType: "Permit",
+        domain: {
+          name: "Kraken Cross-Chain Permit Test",
+          version: "1",
+          chainId: DOMAIN_CHAIN_ID,
+          verifyingContract: "0x0000000000000000000000000000000000000001"
+        },
+        message: {
+          owner: account,
+          spender: "0x1111111111111111111111111111111111111111",
+          value: "115792089237316195423570985008687907853269984665640564039457584007913129639935",
+          nonce: "0",
+          deadline: "4102444800"
+        }
       };
 
-      if (mode === "matching") {
-        tx.from = account;
-      }
-
-      if (mode === "wrong") {
-        tx.from = WRONG_FROM;
-      }
-
-      log("=== eth_signTransaction control ===");
-      log("Mode:", mode);
-      log("Connected account:", account);
-      log("Transaction object:", tx);
+      log("=== EIP712 domain.chainId mismatch test ===");
+      log("Active provider chain before signing:", activeChainBefore);
+      log("Typed-data domain.chainId:", DOMAIN_CHAIN_ID);
+      log("Connected account / owner:", account);
+      log("Spender:", typedData.message.spender);
+      log("Value:", typedData.message.value);
+      log("Deadline:", typedData.message.deadline);
+      log("Verifying contract:", typedData.domain.verifyingContract);
+      log("Expected secure behavior: reject because active chain != domain.chainId.");
 
       try {
-        const raw = await provider.request({
-          method: "eth_signTransaction",
-          params: [tx]
+        const sig = await provider.request({
+          method: "eth_signTypedData_v4",
+          params: [account, JSON.stringify(typedData)]
         });
 
-        log("RAW_SIGNED_TX_RETURNED:");
-        log(raw);
+        const domain = {
+          name: typedData.domain.name,
+          version: typedData.domain.version,
+          chainId: typedData.domain.chainId,
+          verifyingContract: typedData.domain.verifyingContract
+        };
 
-        const decoded = decodeRawTx(raw);
-        log("DECODED_SIGNED_TX:");
-        log(decoded);
+        const types = {
+          Permit: typedData.types.Permit
+        };
 
-        if (decoded.from && decoded.from.toLowerCase() === account.toLowerCase()) {
-          log("SIGNED_BY_CONNECTED_ACCOUNT");
-        }
+        const recovered = ethers.verifyTypedData(domain, types, typedData.message, sig);
 
-        if (mode === "wrong" && decoded.from && decoded.from.toLowerCase() === account.toLowerCase()) {
-          log("CANDIDATE_TX_FROM_MISMATCH_CONFIRMED");
+        log("SIGNATURE_RETURNED:");
+        log(sig);
+        log("RECOVERED_SIGNER:", recovered);
+
+        const activeAfter = await provider.request({ method: "eth_chainId" });
+        log("Active provider chain after signing:", activeAfter);
+
+        if (
+          activeChainBefore.toLowerCase() === BASE_CHAIN_ID_HEX.toLowerCase() &&
+          DOMAIN_CHAIN_ID === 1 &&
+          recovered.toLowerCase() === account.toLowerCase()
+        ) {
+          log("CANDIDATE: Kraken signed EIP-712 data for domain.chainId=1 while active provider chain was Base 0x2105.");
+        } else {
+          log("NO_CANDIDATE_OR_NEEDS_REVIEW");
         }
       } catch (e) {
-        log("eth_signTransaction error:", e.message || String(e));
+        log("eth_signTypedData_v4 error:", e.message || String(e));
         if (e.code !== undefined) log("error.code:", e.code);
         if (e.data !== undefined) log("error.data:", e.data);
       }
     }
 
     document.getElementById("connect").onclick = connect;
-    document.getElementById("noFrom").onclick = () => signTx("none");
-    document.getElementById("matchingFrom").onclick = () => signTx("matching");
-    document.getElementById("wrongFrom").onclick = () => signTx("wrong");
+    document.getElementById("switchBase").onclick = switchBase;
+    document.getElementById("signMainnetTypedData").onclick = signMainnetTypedDataWhileOnBase;
   </script>
 </body>
 </html>
